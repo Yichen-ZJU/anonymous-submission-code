@@ -1,106 +1,41 @@
-# DataValve: Selecting-while-Training via Utility-Gated Routing
+# DataValve: Selecting-while-Training via Utility-Gated Routing for Visual Instruction Tuning
 
-Reference implementation accompanying the NeurIPS 2026 submission
-*"DataValve: Selecting-while-Training via Utility-Gated Routing for Visual Instruction Tuning"*.
+[![Anonymous Code](https://img.shields.io/badge/Anonymous-Code-blue)](https://anonymous.4open.science/r/paper-code-2DAE)
 
-## About This Release
+We propose **DataValve**, a *selecting-while-training* framework for efficient visual instruction tuning of multimodal large language models (MLLMs). Instead of pre-selecting a fixed data subset before training, DataValve dynamically routes training data at each step through a lightweight router trained by a utility-gated policy-gradient objective. The router observes candidate super-batches through pre-extracted features, selects a small training batch, and passes only selected samples to the target MLLM. Golden set loss feedback measures the observed effect on the evolving model, while an online LoRA-influence gate modulates credit by update strength.
 
-This repository contains the **complete core algorithm** of DataValve for review
-and verification purposes. The implementation is self-contained and all
-method-level components described in the paper are fully present:
+On LLaVA-1.5-7B with LLaVA-665K, DataValve routes only **20%** of training data while achieving **98.2%** of full-data fine-tuning performance, with **2.3 EFLOPs** total compute and **8.2h** wall-clock time.
 
-| Component | File |
-|---|---|
-| Router (4-layer MLP, Top-K + STE) | `datavalve/router.py` |
-| Utility-Gated PG Loss (reward, gate, advantage) | `datavalve/losses.py` |
-| Trainer (action replay, super-batch, consensus) | `datavalve/trainer.py` |
-| Training entry point (LLaVA-LoRA integration) | `datavalve/train.py` |
+## Getting Started
 
-> **What is NOT included.**
-> Two components are deliberately withheld as they contain no algorithmic
-> contribution:
->
-> * **LoRA gradient hooks.** The online influence gate (Eqs.~13--15) computes
->   γ_t from LoRA gradient norms. Under standard DDP these are directly
->   accessible via `param.grad`. DeepSpeed ZeRO-3 frees `.grad` after each
->   micro-step, requiring `register_hook` callbacks — a framework-specific
->   workaround with no scientific content. The complete gate logic is
->   implemented in `losses.py`.
->
-> * **Golden Set construction.** As described in Section~3, the Golden Set is
->   built by probing a small subset of the training pool with the untuned
->   target MLLM, filtering samples by loss percentiles, and splitting into four
->   rotating shards. This is a one-time data preprocessing step; the routing
->   and feedback mechanisms that consume the Golden Set are fully present.
+### Requirements
+- Python 3.10+
+- CUDA 12.1+
+- 8× NVIDIA GPUs (48GB+ each)
+- DeepSpeed ZeRO-3
+- [LLaVA](https://github.com/haotian-liu/LLaVA) and Vicuna-7B-v1.5
 
-## Reproducibility Note
-
-We release the complete training pipeline including multi-GPU consensus
-gating and the delayed action-replay loop.
-To preserve the integrity of the double-blind review process, the
-following are **intentionally withheld** during the review period:
-
-- Pretrained model checkpoints (Vicuna, CLIP, LLaVA projector)
-- Pre-extracted CLIP features and quality scores
-- Training data files (LLaVA-665K subsets)
-- Golden Set construction script (one-time data preprocessing)
-- ZeRO-3 gradient hook workaround (framework-specific engineering)
-- LLaVA codebase (clone separately from github.com/haotian-liu/LLaVA)
-- Specific random seeds used for paper results
-
-These assets are standard publicly-available resources (LLaVA-665K,
-Vicuna-7B-v1.5, CLIP-ViT-L/14) and will be linked with exact versions upon
-acceptance. The codebase is fully functional with these assets in place.
-
-## Quick Start
-
+### Installation
 ```bash
-# 1. Clone the LLaVA dependency (required for model architecture)
-git clone https://github.com/haotian-liu/LLaVA.git
-
-# 2. Prepare checkpoints and data (will be linked upon acceptance)
-# 3. Install dependencies
+git clone https://anonymous.4open.science/r/paper-code-2DAE
+cd data-valve
 pip install -r requirements.txt
-
-# 4. Train
-bash scripts/run.sh
 ```
 
-## Method Overview
+### Data Preparation
+1. Download LLaVA-665K dataset
+2. Pre-extract CLIP ViT-L/14 features
+3. Construct the golden set (2,048 reserved samples)
 
-DataValve replaces offline select-then-train with a **selecting-while-training**
-framework. At each training step:
-
-1. A lightweight Router scores candidates from a super-batch via pre-extracted
-   multimodal features (CLIP).
-2. Top-K + Straight-Through Estimator selects a training batch.
-3. Only selected samples enter target MLLM forward/backward.
-4. A delayed feedback loop evaluates routed actions on a rotating Golden Set
-   and updates the Router via utility-gated policy gradient:
-
-   ```
-   R_t = delta_hat_t * gamma_t      (utility-gated reward)
-   A_t = R_t - b_t                  (advantage baseline)
-   L_PG = -A_t * mean(log q_selected)
-   ```
-
-   where `delta_hat_t` is shard-aware normalized golden loss feedback and
-   `gamma_t` is an online LoRA influence gate that modulates credit by the
-   relative update strength of the routed batch.
-
-## License
-
-This project is built upon [LLaVA](https://github.com/haotian-liu/LLaVA)
-(Apache 2.0). Full license information will be included upon public release.
-
-## Citation
-
-```bibtex
-@inproceedings{datavalve2026,
-  title     = {DataValve: Selecting-while-Training via Utility-Gated
-               Routing for Visual Instruction Tuning},
-  author    = {Anonymous},
-  booktitle = {Advances in Neural Information Processing Systems},
-  year      = {2026},
-}
+### Training
+```bash
+deepspeed --num_gpus=8 train.py \
+  --target_ratio 0.20 \
+  --warmup_ratio_dujiangyan 0.03 \
+  --lambda_sand 0.0 --lambda_diversity 0.0 --lambda_reinforce 1.0
 ```
+
+### Evaluation
+Evaluate on 9 standard MLLM benchmarks: VQAv2, GQA, SQA-I, TextVQA, POPE, MME, MMBench, MMBench-cn, LLaVA-Bench.
+
+Full instructions coming soon.
